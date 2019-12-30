@@ -1,0 +1,129 @@
+﻿@page "/"
+@using System.Threading
+@using Nethereum.Web3;
+@using Nethereum.JsonRpc.Client;
+@using Nethereum.Contracts;
+@using Nethereum.RPC.TransactionManagers
+@inject IJSRuntime JSRuntime;
+
+@inject HttpClient Http
+
+<h1>Twitter</h1>
+
+@foreach (var message in messages)
+{
+    <Tweet Name="@message.Name" Text="@message.Text" />
+}
+
+<br />
+<textarea @bind="message" textarea rows="4" cols="50" placeholder="Type new message..." />
+<br />
+<button @onclick="PostMessage">Send</button>
+
+<br />
+<br />
+<p>
+    <input @bind="name" type="text" placeholder="Type new name..." />
+    <button @onclick="ChangeName">Change</button>
+</p>
+
+@code {
+    const string NodeUrl = "https://mainnet.infura.io/v3/d9edf780adb945b4ad71b08b090b78bd";
+
+    const string ContractAddress = "0x4E8056dfE7124A74aCB23244e3E24110e2AF0A98";
+
+    const string ContractAbi = "[{\"constant\":false,\"inputs\":[{\"name\":\"name\",\"type\":\"string\"}],\"name\":\"changeName\",\"outputs\":[],\"payable\":false,\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[{\"name\":\"user\",\"type\":\"address\"},{\"name\":\"index\",\"type\":\"uint256\"}],\"name\":\"getMessage\",\"outputs\":[{\"name\":\"value\",\"type\":\"string\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[{\"name\":\"user\",\"type\":\"address\"}],\"name\":\"getName\",\"outputs\":[{\"name\":\"name\",\"type\":\"string\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":false,\"inputs\":[{\"name\":\"text\",\"type\":\"string\"}],\"name\":\"postMessage\",\"outputs\":[],\"payable\":false,\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"countHistory\",\"outputs\":[{\"name\":\"length\",\"type\":\"uint256\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[{\"name\":\"user\",\"type\":\"address\"}],\"name\":\"countMessages\",\"outputs\":[{\"name\":\"length\",\"type\":\"uint256\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[{\"name\":\"index\",\"type\":\"uint256\"}],\"name\":\"getHistory\",\"outputs\":[{\"name\":\"user\",\"type\":\"address\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"}]";
+
+    Web3 web3;
+
+    Contract contract;
+
+    string address;
+
+    string name;
+
+    string message;
+
+    readonly List<Message> messages = new List<Message>();
+
+
+    protected override void OnInitialized()
+    {
+        web3 = new Web3(new SimpleRpcClient(new Uri(NodeUrl), Http));
+
+        contract = web3.Eth.GetContract(ContractAbi, ContractAddress);
+
+        LoadTweets();
+    }
+
+    async void LoadTweets()
+    {
+        messages.Clear();
+
+        var getName = contract.GetFunction("getName");
+
+        var countHistory = contract.GetFunction("countHistory");
+
+        var getHistory = contract.GetFunction("getHistory");
+
+        var countMessage = contract.GetFunction("countMessages");
+
+        var getMessage = contract.GetFunction("getMessage");
+
+        var historyCount = await countHistory.CallAsync<int>();
+
+        for (var i = historyCount - 1; i >= 0; i--)
+        {
+            var userAddress = await getHistory.CallAsync<string>(i);
+
+            var userName = await getName.CallAsync<string>(userAddress);
+
+            var userMessageCount = await countMessage.CallAsync<int>(userAddress);
+
+            var userMessage = await getMessage.CallAsync<string>(userAddress, userMessageCount - 1 - messages.Count(m => m.Address == userAddress));
+
+            messages.Add(new Message { Address = userAddress, Name = userName, Text = userMessage });
+        }
+
+        StateHasChanged();
+    }
+
+    async void PostMessage()
+    {
+        var address = await JSRuntime.InvokeAsync<string>("getAccount");
+
+        var postMessage = contract.GetFunction("postMessage");
+
+        var input = postMessage.CreateTransactionInput(this.address, message);
+
+        var data = input.Data;
+
+        await JSRuntime.InvokeAsync<string>("sendTransaction", ContractAddress, data);
+
+        LoadTweets();
+    }
+
+    async void ChangeName()
+    {
+        var address = await JSRuntime.InvokeAsync<string>("getAccount");
+
+        var changeName = contract.GetFunction("changeName");
+
+        var input = changeName.CreateTransactionInput(this.address, name);
+
+        var data = input.Data;
+
+        await JSRuntime.InvokeAsync<string>("sendTransaction", ContractAddress, data);
+
+        LoadTweets();
+    }
+
+    public class Message
+    {
+        public string Address { get; set; }
+
+        public string Name { get; set; }
+
+        public string Text { get; set; }
+    }
+}
